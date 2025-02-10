@@ -1,0 +1,96 @@
+---
+title: "Asritha-week3-assignment "
+author: "Asritha suraparaju"
+date: "2025-02-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+```{r}
+install.packages("readxl")
+```
+```{r}
+install.packages("microbenchmark")
+```
+```{r}
+# Load necessary libraries
+library(readxl)
+library(microbenchmark)
+```
+
+```{r}
+getwd()
+```
+
+```{r}
+setwd("C:/Users/MKT/Downloads")
+```
+
+```{r}
+# Read the data
+df <- read_excel("clinics.xls")
+print(head(df))
+```
+```{r}
+# Ensure locLat and locLong are numeric
+df$locLat <- as.numeric(df$locLat)
+df$locLong <- as.numeric(df$locLong)
+
+```
+
+```{r}
+# Function to compute Haversine distance
+haversine <- function(lat1, lon1, lat2, lon2) {
+  MILES <- 3959
+  lat1 <- lat1 * pi / 180
+  lon1 <- lon1 * pi / 180
+  lat2 <- lat2 * pi / 180
+  lon2 <- lon2 * pi / 180
+  dlat <- lat2 - lat1
+  dlon <- lon2 - lon1
+  a <- sin(dlat / 2)^2 + cos(lat1) * cos(lat2) * sin(dlon / 2)^2
+  c <- 2 * asin(sqrt(a))
+  return(MILES * c)
+}
+
+# Method 1: Compute distance using a basic loop
+haversine_looping <- function(df) {
+  distance_list <- numeric(nrow(df))
+  for (i in 1:nrow(df)) {
+    distance_list[i] <- haversine(40.671, -73.985, df$locLat[i], df$locLong[i])
+  }
+  return(distance_list)
+}
+
+# Method 2: Utilize apply function for row-wise computation
+haversine_apply <- function(df) {
+  return(sapply(1:nrow(df), function(i) haversine(40.671, -73.985, df$locLat[i], df$locLong[i])))
+}
+
+# Method 3: Perform vectorized computation for efficiency
+haversine_vectorized <- function(df) {
+  return(haversine(40.671, -73.985, as.numeric(df$locLat), as.numeric(df$locLong)))
+}
+
+
+
+# Compare execution times of different methods
+benchmark_results <- microbenchmark(
+  for_loop = haversine_looping(df),
+  apply_function = haversine_apply(df),
+  vectorized = haversine_vectorized(df),
+  times = 10
+)
+
+print(benchmark_results)
+```
+    
+
+
