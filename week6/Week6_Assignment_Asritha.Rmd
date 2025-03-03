@@ -1,0 +1,119 @@
+---
+title: "Week6_Assignment_Asritha.Rmd"
+author: "Asritha suraparaju"
+date: "2025-03-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(data.table)
+library(geosphere)
+library(GA)
+library(purrr)
+library(sf)
+```
+
+
+
+```{r}
+## Load the population data
+pop.data <- data.table::fread("Mo_pop_Sim.csv")
+str(pop.data)
+frac <- 0.0001
+small.data <- pop.data[sample(1:nrow(pop.data),
+                               size = round(nrow(pop.data) * frac),
+                               replace = F), ## extract a sample of randomlychosen 1% rows
+                        ]  ## and choose all columns
+```
+
+
+```{r}
+## Load the FQHC data
+data_path <- 'MO_2018_Federally_Qualified_Health_Center_Locations'
+fqhc.data <- data.table(as.data.frame(st_read(data_path,
+                     'MO_2018_Federally_Qualified_Health_Center_Locations')))
+
+```
+
+
+
+```{r}
+# Approach 1: Average Closeness of a Location from All Residences
+average_distance <- function(fqhc_lat, fqhc_long, pop_data) {
+  distances <- distHaversine(matrix(c(pop_data$long, pop_data$lat), ncol = 2),
+                             c(fqhc_long, fqhc_lat))
+  return(mean(distances))
+}
+
+fqhc.data[, avg_distance := mapply(average_distance, Latitude, Longitude, MoreArgs = list(pop_data = small.data))]
+
+# Select top 8 locations with the smallest average distance
+selected_fqhc_closeness <- fqhc.data[order(avg_distance)][1:8]
+print(selected_fqhc_closeness)
+```
+```{r}
+# Approach 2: Highest Density of Residences within a 30-mile Radius
+count_nearby_residents <- function(fqhc_lat, fqhc_long, pop_data) {
+  distances <- distHaversine(matrix(c(pop_data$long, pop_data$lat), ncol = 2),
+                             c(fqhc_long, fqhc_lat))
+  return(sum(distances <= 48280))
+}
+
+fqhc.data[, population_within_30_miles := mapply(count_nearby_residents, Latitude, Longitude, MoreArgs = list(pop_data = small.data))]
+
+# Select top 8 FQHCs with the highest population density
+selected_fqhc_density <- fqhc.data[order(-population_within_30_miles)][1:8]
+print(selected_fqhc_density)
+```
+
+```{r}
+# Fitness function: Maximize the population within 30 miles of selected FQHCs
+fitness_function <- function(indices) {
+  selected_fqhc <- fqhc.data[indices, ]
+  total_population <- sum(sapply(1:nrow(selected_fqhc), function(i) {
+    count_nearby_residents(selected_fqhc$Latitude[i], selected_fqhc$Longitude[i], small.data)
+  }))
+  return(total_population)
+}
+
+```
+
+
+```{r}
+# Run the Genetic Algorithm
+ga_result <- ga(
+  type = "permutation",
+  fitness = function(indices) fitness_function(indices),
+  lower = 1,
+  upper = nrow(fqhc.data),
+  popSize = 20,
+  maxiter = 50,
+  run = 10,
+  parallel = FALSE
+)
+
+```
+
+
+```{r}
+# Get the best FQHC locations based on GA optimization
+best_indices <- ga_result@solution[1, ]
+best_fqhc <- fqhc.data[best_indices, ]
+print(best_fqhc)
+```
+
+There exist various methods for choosing 8 Federally Qualified Health Centers (FQHCs) to offer specialized mental health services. The two core selection methods consist of (1) picking locations which provide the shortest average distance to all residential areas and (2) choosing sites based on resident population density within a specific boundary (30 miles). Every method comes with unique preconditions as well as corresponding effects.
+
+When aiming to minimize service travel distances for all residents the first method considers decreased distance as a factor leading to higher service accessibility and usage likelihood. People have equal opportunities to reach the nearest facility provided they overcome all socio-economic and transportation limitations. Our objective in this approach is to reduce the average measurements that gauge how far residences lie from their closest FQHCs. A lower overall distance demonstrates that residents will generally discover FQHCs that require less travel to access.
+
+The second approach selects locations based on population density within thirty-mile regions since it considers areas with higher resident numbers hold higher mental health service demand. The allocation method maximizes the reached population by selecting sites that provide service coverage to the largest possible number of residents located in reasonable travel distances. Our optimization aims to achieve the maximum resident count living within 30 miles of an FQHC using the number of residents within 30 miles of an FQHC as the fitness function. A higher individual count demonstrates that the facility becomes reachable to a greater number of people.
+
+The second approach based on population density selection is preferable to achieve the highest impact of mental health services. Choice of FQHC facilities in populated neighborhoods enables the largest group of residents to access new healthcare services. This strategy assumes that population density and mental health service demand exhibit a direct relationship because increased population numbers produce higher potential utilization rates. The strategy considers actual economic and logistics challenges because residents who live in distant locations might face difficulties accessing services regardless of their physical distances. 
+
+Population-density-based selection of FQHCs delivers the best results for reaching an extensive number of people and thus represents the most effective strategy to implement specialized mental health services.
+
+
