@@ -1,0 +1,171 @@
+
+---
+title: "Asritha_week11"
+author: "Asritha Suraparaju"
+date: "2025-05-02"
+output: html_document
+---
+
+
+```{r}
+# Load required libraries
+suppressMessages({
+  library(mlbench)
+  library(dplyr)
+  library(purrr)
+  library(xgboost)
+  library(caret)
+})
+```
+
+```{r}
+# Load and clean the dataset
+data("PimaIndiansDiabetes2")
+dataset <- na.omit(as.data.frame(PimaIndiansDiabetes2))
+
+# Fit logistic regression model
+logit_model <- glm(diabetes ~ ., data = dataset, family = "binomial")
+coeffs <- coef(logit_model)
+
+# Extract predictor names
+predictors <- setdiff(names(dataset), "diabetes")
+```
+
+```{r}
+# Define dataset sizes
+record_counts <- c(100, 1000, 10000, 100000, 1000000, 10000000)
+
+# Use absolute path to datasets folder
+output_folder <- file.path(getwd(), "datasets")
+if (!dir.exists(output_folder)) dir.create(output_folder)
+
+# Generate and save datasets
+for (count in record_counts) {
+  message("Preparing data of size: ", count)
+
+  # Sample data
+  sampled_data <- map_dfc(predictors, function(col) {
+    sample(dataset[[col]], size = count, replace = TRUE)
+  })
+  names(sampled_data) <- predictors
+
+  # Ensure only model-used predictors are used
+  model_features <- names(coeffs)[-1]
+  available_features <- intersect(model_features, colnames(sampled_data))
+
+  # Skip if no usable predictors
+  if (length(available_features) == 0) {
+    message("Skipping size ", count, " due to no matching predictors.")
+    next
+  }
+
+  # Compute linear prediction
+  linear_pred <- coeffs[1]  # Intercept
+  for (feature in available_features) {
+    linear_pred <- linear_pred + coeffs[feature] * sampled_data[[feature]]
+  }
+
+  # Compute binary outcome
+  sampled_data$outcome <- as.integer(1 / (1 + exp(-linear_pred)) > 0.5)
+
+  # Save CSV using full path
+  output_path <- file.path(output_folder, paste0("generated_data_", count, ".csv"))
+  write.csv(sampled_data, file = output_path, row.names = FALSE)
+  message("Saved to: ", output_path)
+}
+```
+```{r}
+library(xgboost)
+
+sizes <- c(100, 1000, 10000, 100000, 1000000, 10000000)
+results_direct <- data.frame()
+
+for (sz in sizes) {
+  file_path <- paste0("datasets/generated_data_", sz, ".csv")
+  if (!file.exists(file_path)) next
+  
+  message("Training XGBoost direct on size: ", sz)
+  df <- read.csv(file_path)
+  label <- df$outcome
+  df$outcome <- NULL
+  mat <- as.matrix(df)
+
+  dtrain <- xgb.DMatrix(data = mat, label = label)
+  
+  start_time <- Sys.time()
+  model <- xgb.cv(data = dtrain, nrounds = 50, nfold = 5, metrics = "error", verbose = 0)
+  end_time <- Sys.time()
+  
+  acc <- 1 - min(model$evaluation_log$test_error_mean)
+  duration <- round(difftime(end_time, start_time, units = "secs"), 2)
+  
+  results_direct <- rbind(results_direct,
+                          data.frame(Method = "R xgboost() direct CV",
+                                     Dataset_Size = sz,
+                                     Accuracy = round(acc, 4),
+                                     Time_Sec = duration))
+}
+```
+
+```{r}
+# Clean caret-based XGBoost without triggering deprecated ntree_limit
+results_caret <- data.frame()
+
+for (sz in sizes) {
+  file_path <- paste0("datasets/generated_data_", sz, ".csv")
+  if (!file.exists(file_path)) next
+  
+  message("Training XGBoost via caret (clean version) on size: ", sz)
+  df <- read.csv(file_path)
+  df$outcome <- as.factor(df$outcome)
+
+  start_time <- Sys.time()
+
+  ctrl <- trainControl(method = "cv", number = 5, 
+                       verboseIter = FALSE,
+                       allowParallel = TRUE,
+                       returnResamp = "final",
+                       savePredictions = "final")
+
+  tune_grid <- expand.grid(
+    nrounds = 50,
+    max_depth = 6,
+    eta = 0.3,
+    gamma = 0,
+    colsample_bytree = 1,
+    min_child_weight = 1,
+    subsample = 1
+  )
+
+  model <- suppressWarnings(
+    train(outcome ~ ., data = df,
+          method = "xgbTree",
+          trControl = ctrl,
+          tuneGrid = tune_grid,
+          verbose = 0)
+  )
+
+  end_time <- Sys.time()
+  
+  acc <- max(model$results$Accuracy)
+  duration <- round(difftime(end_time, start_time, units = "secs"), 2)
+  
+  results_caret <- rbind(results_caret,
+                         data.frame(Method = "R caret xgboost() 5-fold CV (clean)",
+                                    Dataset_Size = sz,
+                                    Accuracy = round(acc, 4),
+                                    Time_Sec = duration))
+}
+
+
+```
+
+```{r}
+# Combine and display results
+results_all <- rbind(results_direct, results_caret)
+knitr::kable(results_all)
+```
+
+
+```
+
